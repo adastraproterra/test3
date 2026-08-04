@@ -15,6 +15,7 @@ from einspeise_calc import (
     JAHRESMARKTWERT_SOLAR_2025, ANSCHLUSS_PAUSCHALE_2026, UEBERGANG_SATZ_2027,
 )
 from technologie import LFP, NATRIUM, PRESETS
+from eigenverbrauch import simuliere_aus_jahreswerten
 
 st.set_page_config(page_title="PV-Überschuss: was noch lohnt", layout="wide")
 st.title("PV-Überschuss — was ist er noch wert?")
@@ -30,8 +31,17 @@ with st.sidebar:
     ertrag = st.number_input("Spez. Ertrag (kWh/kWp·a)", 700.0, 1200.0, 950.0, 10.0,
                              help="Schätzung. Westerwald ~950.")
     verbrauch = st.number_input("Jahresverbrauch (kWh)", 500.0, 200000.0, 4000.0, 100.0)
-    basis_ev = st.slider("Eigenverbrauchsquote ohne Speicher", 0.10, 0.60, 0.28, 0.01,
-                         help="Schätzung. Haushalt typ. 0,20–0,35.")
+    ev_modus = st.radio("Eigenverbrauch bestimmen",
+                        ["Quote schätzen", "Aus Profil simulieren"],
+                        help="Simulieren rechnet den Eigenverbrauch stundenweise aus "
+                             "synthetischem PV- und Lastprofil (genauer als eine feste Quote).")
+    if ev_modus == "Quote schätzen":
+        basis_ev = st.slider("Eigenverbrauchsquote ohne Speicher", 0.10, 0.60, 0.28, 0.01,
+                             help="Schätzung. Haushalt typ. 0,20–0,35.")
+    else:
+        basis_ev = 0.28  # Platzhalter; wird durch die Simulation überschrieben
+        st.caption("Eigenverbrauch wird aus dem Profil simuliert — die Quote unten "
+                   "wird berechnet, nicht geschätzt.")
     strompreis = st.number_input("Netzbezugspreis (€/kWh)", 0.10, 0.80, 0.34, 0.01,
                                  help="Der eigentliche Hebel: Wert des vermiedenen Bezugs.")
 
@@ -67,8 +77,13 @@ with st.sidebar:
                     key=f"eta_{tech_name}")
     st.caption(f"{tech_name}: η {tech.wirkungsgrad:.0%}, ~{tech.capex_eur_kwh:.0f} €/kWh, "
                f"{tech.zyklen_lebensdauer:,} Zyklen — Werte anpassbar.")
-    nutzfaktor = st.slider("Zyklen-Ausnutzung übers Jahr", 0.40, 1.00, 0.70, 0.05,
-                           help="Schätzung. Winter liefert wenig Überschuss.")
+    p_max = st.number_input("Speicher-Leistung (kW)", 0.5, 30.0, 3.0, 0.5,
+                            help="Nur für die Profil-Simulation relevant.")
+    if ev_modus == "Quote schätzen":
+        nutzfaktor = st.slider("Zyklen-Ausnutzung übers Jahr", 0.40, 1.00, 0.70, 0.05,
+                               help="Schätzung. Winter liefert wenig Überschuss.")
+    else:
+        nutzfaktor = 0.70  # in der Simulation nicht verwendet
 
     with st.expander("Wirtschaftlichkeits-Parameter"):
         horizont = st.slider("Betrachtungshorizont (Jahre)", 5, 25, 15)
@@ -76,11 +91,26 @@ with st.sidebar:
         degr = st.slider("Speicher-Degradation p.a.", 0.0, 0.03, 0.01, 0.005)
         preissteig = st.slider("Strompreis-Steigerung p.a.", 0.0, 0.06, 0.02, 0.005)
 
+@st.cache_data(show_spinner="Simuliere Eigenverbrauch …")
+def _ev_sim(kwp, ertrag, verbrauch, nutzbar, eta, p_max):
+    return simuliere_aus_jahreswerten(kwp, ertrag, verbrauch, nutzbar, eta, p_max)
+
+
+ev_direkt_override = None
+geliefert_override = None
+sim = None
+if ev_modus == "Aus Profil simulieren":
+    sim = _ev_sim(kwp, ertrag, verbrauch, nutzbar, eta, p_max)
+    ev_direkt_override = sim.ev_direkt_kwh
+    geliefert_override = sim.ev_speicher_kwh
+    basis_ev = sim.ev_quote_ohne
+
 anlage = Anlage(kwp=kwp, spez_ertrag=ertrag, verbrauch_kwh=verbrauch,
                 basis_ev_quote=basis_ev, strompreis_bezug=strompreis,
-                einspeise_clip_anteil=clip)
+                einspeise_clip_anteil=clip, ev_direkt_kwh=ev_direkt_override)
 speicher = Speicher(nutzbar_kwh=nutzbar, wirkungsgrad=eta,
-                    nutzungsfaktor=nutzfaktor, capex=capex)
+                    nutzungsfaktor=nutzfaktor, capex=capex,
+                    geliefert_kwh=geliefert_override)
 
 b_ohne = jahresbilanz(anlage, Speicher(), modus, alttarif, marktwert, dv_geb)
 b_mit = jahresbilanz(anlage, speicher, modus, alttarif, marktwert, dv_geb)
@@ -94,6 +124,11 @@ c2.metric("Einspeisesatz (netto)", f"{b_ohne.einspeisesatz*100:.2f} ct/kWh")
 c3.metric("Eigenverbrauch ohne Speicher", f"{b_ohne.ev_quote:.0%}")
 c4.metric("Eigenverbrauch mit Speicher", f"{b_mit.ev_quote:.0%}",
           delta=f"+{(b_mit.ev_quote-b_ohne.ev_quote)*100:.0f} pp")
+if sim is not None:
+    st.caption(f"↑ Eigenverbrauch **simuliert** aus Stundenprofil (nicht geschätzt): "
+               f"ohne Speicher {sim.ev_quote_ohne:.1%}, mit Speicher {sim.ev_quote_mit:.1%}, "
+               f"Speicher-Durchsatz {sim.entladung_kwh:,.0f} kWh/a. "
+               f"Synthetische PV-/Lastprofile — echte PVGIS-/Lastdaten erhöhen die Genauigkeit.")
 
 st.divider()
 st.subheader("Der entscheidende Hebel")

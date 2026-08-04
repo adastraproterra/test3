@@ -85,6 +85,9 @@ class Anlage:
     strompreis_bezug: float = 0.34     # €/kWh Netzbezug (der eigentliche Hebel)
     einspeise_clip_anteil: float = 0.0 # Anteil Überschuss, der durch 50%-Deckel
                                        # verloren geht (nur Neuanlage 2027+; SCHÄTZUNG)
+    ev_direkt_kwh: float | None = None # optional: exakter direkter Eigenverbrauch
+                                       # (kWh, aus Profil-Simulation) — überschreibt
+                                       # basis_ev_quote, wenn gesetzt.
 
     @property
     def erzeugung_kwh(self) -> float:
@@ -98,6 +101,9 @@ class Speicher:
     nutzungsfaktor: float = 0.70       # mittlere Zyklen-Ausnutzung übers Jahr (SCHÄTZUNG)
     capex: float = 0.0                 # Investition inkl. Einbau
     zyklen_pro_jahr: int = 300         # nur informativ
+    geliefert_kwh: float | None = None # optional: exakte Speicher-Lieferung an die
+                                       # Last (kWh, aus Profil-Simulation) — überschreibt
+                                       # das Nutzungsfaktor-Modell, wenn gesetzt.
 
     @property
     def aktiv(self) -> bool:
@@ -129,18 +135,25 @@ def jahresbilanz(anlage: Anlage, speicher: Speicher, modus: Modus,
     C = anlage.verbrauch_kwh
     satz = einspeisesatz(modus, alttarif, marktwert_solar, dv_gebuehr_anteil)
 
-    # Direkter Eigenverbrauch (ohne Speicher), begrenzt durch Verbrauch.
-    direkt = min(anlage.basis_ev_quote * G, C)
+    # Direkter Eigenverbrauch (ohne Speicher). Exakt aus Profil-Simulation,
+    # falls gesetzt — sonst über die geschätzte Quote.
+    if anlage.ev_direkt_kwh is not None:
+        direkt = min(anlage.ev_direkt_kwh, C, G)
+    else:
+        direkt = min(anlage.basis_ev_quote * G, C)
     ueberschuss = max(G - direkt, 0.0)
     rest_verbrauch = max(C - direkt, 0.0)
 
-    # Speicher: liefert bis zu (nutzbar * 365 * Nutzungsfaktor) an die Last,
-    # begrenzt durch verfügbaren Überschuss (nach Ladeverlust) und Restlast.
+    # Speicher: exakte Lieferung aus Simulation, sonst Nutzungsfaktor-Modell.
     if speicher.aktiv:
-        potenzial = speicher.nutzbar_kwh * 365 * speicher.nutzungsfaktor
-        geliefert = min(potenzial,
-                        ueberschuss * speicher.wirkungsgrad,
-                        rest_verbrauch)
+        if speicher.geliefert_kwh is not None:
+            geliefert = min(speicher.geliefert_kwh, ueberschuss * speicher.wirkungsgrad,
+                            rest_verbrauch)
+        else:
+            potenzial = speicher.nutzbar_kwh * 365 * speicher.nutzungsfaktor
+            geliefert = min(potenzial,
+                            ueberschuss * speicher.wirkungsgrad,
+                            rest_verbrauch)
         ladeenergie = geliefert / speicher.wirkungsgrad
     else:
         geliefert = 0.0
