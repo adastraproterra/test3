@@ -14,6 +14,7 @@ from einspeise_calc import (
     vergleich_modi, einspeisesatz,
     JAHRESMARKTWERT_SOLAR_2025, ANSCHLUSS_PAUSCHALE_2026, UEBERGANG_SATZ_2027,
 )
+from technologie import LFP, NATRIUM, PRESETS
 
 st.set_page_config(page_title="PV-Überschuss: was noch lohnt", layout="wide")
 st.title("PV-Überschuss — was ist er noch wert?")
@@ -56,9 +57,16 @@ with st.sidebar:
                          help="Schätzung. Nur Neuanlagen ab 2027.")
 
     st.header("Speicher")
+    tech_name = st.radio("Zellchemie", [LFP.name, NATRIUM.name], horizontal=True)
+    tech = PRESETS[tech_name]
     nutzbar = st.number_input("Nutzbare Kapazität (kWh)", 0.0, 100.0, 7.2, 0.5)
-    capex = st.number_input("Investition inkl. Einbau (€)", 0.0, 100000.0, 5000.0, 100.0)
-    eta = st.slider("Round-Trip-Wirkungsgrad", 0.70, 0.98, 0.90, 0.01)
+    capex_kwh = st.number_input("Kosten (€/kWh)", 100.0, 1500.0, tech.capex_eur_kwh, 10.0,
+                                key=f"capex_{tech_name}")
+    capex = capex_kwh * nutzbar
+    eta = st.slider("Round-Trip-Wirkungsgrad", 0.70, 0.98, tech.wirkungsgrad, 0.01,
+                    key=f"eta_{tech_name}")
+    st.caption(f"{tech_name}: η {tech.wirkungsgrad:.0%}, ~{tech.capex_eur_kwh:.0f} €/kWh, "
+               f"{tech.zyklen_lebensdauer:,} Zyklen — Werte anpassbar.")
     nutzfaktor = st.slider("Zyklen-Ausnutzung übers Jahr", 0.40, 1.00, 0.70, 0.05,
                            help="Schätzung. Winter liefert wenig Überschuss.")
 
@@ -127,11 +135,11 @@ vgl = vergleich_modi(anlage, speicher, alttarif, marktwert, dv_geb)
 df = pd.DataFrame([{
     "Modus": m.value,
     "Einspeisesatz (ct/kWh)": round(bz.einspeisesatz*100, 2),
-    "Einspeiseerlös (€/a)": round(bz.wert_einspeisung, 0),
-    "Eigenverbrauchswert (€/a)": round(bz.wert_eigenverbrauch, 0),
-    "Nutzen gesamt (€/a)": round(bz.nutzen_gesamt, 0),
+    "Einspeiseerlös (€/a)": int(round(bz.wert_einspeisung)),
+    "Eigenverbrauchswert (€/a)": int(round(bz.wert_eigenverbrauch)),
+    "Nutzen gesamt (€/a)": int(round(bz.nutzen_gesamt)),
 } for m, bz in vgl.items()])
-st.dataframe(df, hide_index=True, use_container_width=True)
+st.table(df.set_index("Modus"))
 st.bar_chart(df.set_index("Modus")["Einspeiseerlös (€/a)"])
 st.caption(
     "Kernaussage: Der Einspeiseerlös kollabiert von Bestands-Alttarif zu allen "

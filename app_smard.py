@@ -204,16 +204,16 @@ if "tech" in st.session_state:
         rows.append({
             "Technologie": name,
             "η": f"{t.wirkungsgrad:.0%}",
-            "Wert (€/a)": round(r.batteriewert, 0),
-            "Zyklen/a": round(inv.zyklen_pro_jahr, 0),
+            "Wert (€/a)": int(round(r.batteriewert)),
+            "Zyklen/a": int(round(inv.zyklen_pro_jahr)),
             "Lebensdauer (J)": round(inv.lebensdauer_jahre, 1),
             "Ersatz (Jahr)": ", ".join(map(str, inv.ersatz_jahre)) or "—",
-            "Capex (€)": round(t.capex_eur_kwh * nutzbar, 0),
+            "Capex (€)": int(round(t.capex_eur_kwh * nutzbar)),
             "Amort. (J)": ("—" if inv.amortisation_jahre == float("inf")
                            else round(inv.amortisation_jahre, 1)),
-            f"NPV {horizont}J (€)": round(inv.npv, 0),
+            f"NPV {horizont}J (€)": int(round(inv.npv)),
         })
-    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    st.table(pd.DataFrame(rows).set_index("Technologie"))
 
     beste = max(erg.items(), key=lambda kv: kv[1][2].npv)
     st.success(f"Höchster NPV: **{beste[0]}** mit {beste[1][2].npv:,.0f} € "
